@@ -1,0 +1,12 @@
+{
+  "name": "tsla-regression-bot",
+  "version": "1.0.0",
+  "description": "Alpaca paper trading bot — 5-day regression ±2.5σ strategy",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
