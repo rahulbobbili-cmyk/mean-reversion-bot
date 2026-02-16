@@ -23,7 +23,7 @@ const FEED       = process.env.ALPACA_FEED       || 'sip';
 const SYMBOL     = process.env.SYMBOL            || 'TSLA';
 const QTY        = parseInt(process.env.QTY      || '1', 10);
 const SL_PCT     = parseFloat(process.env.STOP_LOSS_PCT || String(DEFAULT_STOP_LOSS_PCT));
-const POLL_MS    = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
+const POLL_MS    = parseInt(process.env.POLL_INTERVAL_MS || '300000', 10);
 const PORT       = parseInt(process.env.PORT || '3000', 10);
 
 if (!API_KEY || !API_SECRET) {
