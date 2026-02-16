@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Bot Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: #0e0e1a;
+  color: #ccc;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 8px;
+  gap: 6px;
+}
+
+/* ===== HEADER ===== */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #1a1a2e;
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+.header h1 {
+  font-size: 14px;
+  color: #42a5f5;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.header .config-badges {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #888;
+}
+.header .config-badges span {
+  background: #2a2a4a;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+/* ===== STATUS STRIP ===== */
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #1a1a2e;
+  border-radius: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.status-dot.rth { background: #00e676; animation: pulse 1.5s infinite; }
+.status-dot.premarket { background: #ffd740; }
+.status-dot.afterhours { background: #ff9800; }
+.status-dot.closed { background: #666; }
+.status-dot.weekend { background: #666; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.status-strip .sep { color: #333; }
+.stat-label { color: #666688; }
+.stat-value { color: #ccc; }
+.stat-value.pos-long { color: #00e676; }
+.stat-value.pos-short { color: #ff5252; }
+.stat-value.pos-flat { color: #888; }
+.pnl-pos { color: #00e676; }
+.pnl-neg { color: #ff5252; }
+
+/* ===== ACCOUNT STRIP ===== */
+.account-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #16162a;
+  border-radius: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+/* ===== CHART ===== */
+.chart-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 250px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0e0e1a;
+}
+.chart-wrap .no-data {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  font-size: 14px;
+}
+
+/* ===== TRADE LOG ===== */
+.log-panel {
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 8px 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.log-panel h3 {
+  font-size: 11px;
+  color: #42a5f5;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.log-entry {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+  border-bottom: 1px solid #1e1e36;
+}
+.log-entry:last-child { border-bottom: none; }
+.log-time { color: #555; min-width: 160px; flex-shrink: 0; }
+.log-msg { color: #aaa; }
+.log-msg.entry { color: #42a5f5; font-weight: 600; }
+.log-msg.exit { color: #ffd740; font-weight: 600; }
+.log-msg.error { color: #ff5252; font-weight: 600; }
+
+/* ===== FOOTER ===== */
+.footer {
+  text-align: center;
+  font-size: 10px;
+  color: #333;
+  padding: 4px;
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0e0e1a; }
+::-webkit-scrollbar-thumb { background: #333355; border-radius: 3px; }
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+  .dashboard { padding: 4px; gap: 4px; }
+  .header { padding: 6px 8px; gap: 6px; }
+  .header h1 { font-size: 13px; }
+  .status-strip { padding: 6px 8px; font-size: 10px; }
+  .log-entry { font-size: 10px; }
+  .log-time { min-width: 120px; }
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://unpkg.com/htm@3.1.1/preact/standalone.umd.js"></script>
+<script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const { html, render, useState, useEffect, useRef, useCallback } = htmPreact;
+
+const REG_BAND_MULT = 2.5;
+const REG_REF_MULT = 1.5;
+
+// ── API Fetchers ──
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    return await r.json();
+  } catch { return null; }
+}
+
+async function fetchChart() {
+  try {
+    const r = await fetch('/api/chart');
+    return await r.json();
+  } catch { return null; }
+}
+
+async function fetchLog() {
+  try {
+    const r = await fetch('/api/log');
+    return await r.json();
+  } catch { return null; }
+}
+
+// ── Chart Component ──
+
+function ChartPanel({ candles, regression }) {
+  const containerRef = useRef(null);
+  const chartRef = useRef(null);
+  const seriesRef = useRef({});
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const chart = LightweightCharts.createChart(containerRef.current, {
+      layout: { background: { color: '#0e0e1a' }, textColor: '#888', fontSize: 11 },
+      grid: {
+        vertLines: { color: 'rgba(42, 42, 74, 0.3)' },
+        horzLines: { color: 'rgba(42, 42, 74, 0.3)' },
+      },
+      crosshair: {
+        mode: 0,
+        vertLine: { color: 'rgba(255,255,255,0.15)', width: 1, style: 2 },
+        horzLine: { color: 'rgba(255,255,255,0.15)', width: 1, style: 2 },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        borderColor: '#2a2a4a',
+        tickMarkFormatter: (t) => {
+          const d = new Date(t * 1000);
+          const pst = d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false });
+          return pst;
+        },
+      },
+      rightPriceScale: { borderColor: '#2a2a4a' },
+    });
+    chartRef.current = chart;
+
+    const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor: '#00e676', downColor: '#ff5252',
+      borderUpColor: '#00e676', borderDownColor: '#ff5252',
+      wickUpColor: '#00e67688', wickDownColor: '#ff525288',
+    });
+    seriesRef.current.candle = candleSeries;
+
+    const volSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'vol',
+    });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    seriesRef.current.vol = volSeries;
+
+    // Regression line
+    const regLine = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#42a5f5', lineWidth: 2, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    seriesRef.current.reg = regLine;
+
+    // Upper band (+2.5σ)
+    const upperLine = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#ff5252', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    seriesRef.current.upper = upperLine;
+
+    // Lower band (-2.5σ)
+    const lowerLine = chart.addSeries(LightweightCharts.LineSeries, {
+      color: '#00e676', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    seriesRef.current.lower = lowerLine;
+
+    // Upper ref band (+1.5σ)
+    const upper15 = chart.addSeries(LightweightCharts.LineSeries, {
+      color: 'rgba(255,82,82,0.3)', lineWidth: 1, lineStyle: 3,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    seriesRef.current.upper15 = upper15;
+
+    // Lower ref band (-1.5σ)
+    const lower15 = chart.addSeries(LightweightCharts.LineSeries, {
+      color: 'rgba(0,230,118,0.3)', lineWidth: 1, lineStyle: 3,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    seriesRef.current.lower15 = lower15;
+
+    // Resize observer
+    const ro = new ResizeObserver(() => {
+      const { width, height } = containerRef.current.getBoundingClientRect();
+      chart.resize(width, height);
+    });
+    ro.observe(containerRef.current);
+
+    return () => { ro.disconnect(); chart.remove(); };
+  }, []);
+
+  // Update data when candles/regression change
+  useEffect(() => {
+    if (!chartRef.current || !candles || candles.length === 0) return;
+
+    const candleData = candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+    const volData = candles.map(c => ({
+      time: c.time,
+      value: c.volume,
+      color: c.close >= c.open ? 'rgba(0,230,118,0.15)' : 'rgba(255,82,82,0.15)',
+    }));
+
+    seriesRef.current.candle.setData(candleData);
+    seriesRef.current.vol.setData(volData);
+
+    // Regression lines
+    if (regression && regression.sigma) {
+      const t0 = candles[0].time;
+      const t1 = candles[candles.length - 1].time;
+      const v0 = regression.intercept + regression.slope * (t0 - regression.x0);
+      const v1 = regression.intercept + regression.slope * (t1 - regression.x0);
+      const bandOffset = REG_BAND_MULT * regression.sigma;
+      const refOffset = REG_REF_MULT * regression.sigma;
+
+      seriesRef.current.reg.setData([{ time: t0, value: v0 }, { time: t1, value: v1 }]);
+      seriesRef.current.upper.setData([{ time: t0, value: v0 + bandOffset }, { time: t1, value: v1 + bandOffset }]);
+      seriesRef.current.lower.setData([{ time: t0, value: v0 - bandOffset }, { time: t1, value: v1 - bandOffset }]);
+      seriesRef.current.upper15.setData([{ time: t0, value: v0 + refOffset }, { time: t1, value: v1 + refOffset }]);
+      seriesRef.current.lower15.setData([{ time: t0, value: v0 - refOffset }, { time: t1, value: v1 - refOffset }]);
+    } else {
+      seriesRef.current.reg.setData([]);
+      seriesRef.current.upper.setData([]);
+      seriesRef.current.lower.setData([]);
+      seriesRef.current.upper15.setData([]);
+      seriesRef.current.lower15.setData([]);
+    }
+
+    chartRef.current.timeScale().fitContent();
+  }, [candles, regression]);
+
+  return html`<div ref=${containerRef} style="width:100%;height:100%"></div>`;
+}
+
+// ── Main App ──
+
+function App() {
+  const [status, setStatus] = useState(null);
+  const [chartData, setChartData] = useState(null);
+  const [logData, setLogData] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Poll status every 5s
+  useEffect(() => {
+    let active = true;
+    async function poll() {
+      const s = await fetchStatus();
+      if (active && s) setStatus(s);
+    }
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  // Poll chart data every 15s
+  useEffect(() => {
+    let active = true;
+    async function poll() {
+      const c = await fetchChart();
+      if (active && c) setChartData(c);
+    }
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  // Poll trade log every 5s
+  useEffect(() => {
+    let active = true;
+    async function poll() {
+      const l = await fetchLog();
+      if (active && l) setLogData(l);
+    }
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  const cfg = status?.config || {};
+  const pos = status?.position;
+  const acct = status?.account;
+  const tick = status?.lastTickData;
+  const sess = status?.session || 'LOADING';
+
+  const sessionLabel = {
+    RTH: 'RTH (Market Open)',
+    PREMARKET: 'Pre-Market',
+    AFTERHOURS: 'After Hours',
+    WEEKEND: 'Weekend',
+    CLOSED: 'Closed',
+    LOADING: 'Loading...',
+  }[sess] || sess;
+
+  const dotClass = {
+    RTH: 'rth', PREMARKET: 'premarket', AFTERHOURS: 'afterhours',
+    WEEKEND: 'weekend', CLOSED: 'closed',
+  }[sess] || 'closed';
+
+  const posClass = pos ? (pos.side === 'LONG' ? 'pos-long' : 'pos-short') : 'pos-flat';
+  const posText = pos ? `${pos.side} ${pos.qty}x @ $${Number(pos.entryPrice).toFixed(2)}` : 'Flat';
+  const pnlVal = pos ? Number(pos.unrealizedPnl) : 0;
+  const pnlClass = pnlVal >= 0 ? 'pnl-pos' : 'pnl-neg';
+  const pnlText = pos ? `$${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}` : '';
+
+  const entries = logData?.entries || [];
+
+  return html`
+    <div class="dashboard">
+      <!-- Header -->
+      <div class="header">
+        <h1>${cfg.symbol || '...'} Regression Bot</h1>
+        <div class="config-badges">
+          <span>Qty: ${cfg.qty || '?'}</span>
+          <span>SL: ${cfg.slPct || '?'}%</span>
+          <span>Poll: ${cfg.pollMs ? cfg.pollMs / 1000 + 's' : '?'}</span>
+          <span>Feed: ${cfg.feed || '?'}</span>
+        </div>
+      </div>
+
+      <!-- Status Strip -->
+      <div class="status-strip">
+        <span class="status-dot ${dotClass}"></span>
+        <span class="stat-value" style="font-weight:600">${sessionLabel}</span>
+        <span class="sep">|</span>
+        <span class="stat-label">Uptime:</span>
+        <span class="stat-value">${status?.uptime || '...'}</span>
+        <span class="sep">|</span>
+        <span class="stat-label">Last Tick:</span>
+        <span class="stat-value">${status?.lastTick ? new Date(status.lastTick).toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '...'}</span>
+        ${tick ? html`
+          <span class="sep">|</span>
+          <span class="stat-label">\u03c3:</span>
+          <span class="stat-value">${tick.sigma.toFixed(2)}</span>
+          <span class="sep">|</span>
+          <span class="stat-label">Bars:</span>
+          <span class="stat-value">${tick.barCount}</span>
+        ` : ''}
+      </div>
+
+      <!-- Account + Position -->
+      <div class="account-strip">
+        <span class="stat-label">Equity:</span>
+        <span class="stat-value">${acct ? '$' + Number(acct.equity).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '...'}</span>
+        <span class="sep">|</span>
+        <span class="stat-label">Buying Power:</span>
+        <span class="stat-value">${acct ? '$' + Number(acct.buyingPower).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '...'}</span>
+        <span class="sep">|</span>
+        <span class="stat-label">Position:</span>
+        <span class="stat-value ${posClass}">${posText}</span>
+        ${pos ? html`
+          <span class="sep">|</span>
+          <span class="stat-label">PnL:</span>
+          <span class="${pnlClass}">${pnlText}</span>
+        ` : ''}
+        ${tick ? html`
+          <span class="sep">|</span>
+          <span class="stat-label">Reg:</span>
+          <span class="stat-value">${tick.regVal.toFixed(2)}</span>
+          <span class="stat-label" style="margin-left:4px">Upper:</span>
+          <span class="stat-value" style="color:#ff5252">${tick.upperBand.toFixed(2)}</span>
+          <span class="stat-label" style="margin-left:4px">Lower:</span>
+          <span class="stat-value" style="color:#00e676">${tick.lowerBand.toFixed(2)}</span>
+        ` : ''}
+      </div>
+
+      <!-- Chart -->
+      <div class="chart-wrap">
+        ${chartData && chartData.candles && chartData.candles.length > 0
+          ? html`<${ChartPanel} candles=${chartData.candles} regression=${chartData.regression} />`
+          : html`<div class="no-data">Waiting for market data...</div>`
+        }
+      </div>
+
+      <!-- Trade Log -->
+      <div class="log-panel">
+        <h3>Trade Log (${entries.length} entries)</h3>
+        ${entries.length === 0
+          ? html`<div style="color:#555;font-size:11px;padding:4px 0">No activity yet...</div>`
+          : entries.slice(0, 30).map(e => html`
+              <div class="log-entry">
+                <span class="log-time">${e.time}</span>
+                <span class="log-msg ${e.type}">${e.message}</span>
+              </div>
+            `)
+        }
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">Auto-refreshes every 5s | Built with Preact + Lightweight Charts</div>
+    </div>
+  `;
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
+</body>
+</html>
